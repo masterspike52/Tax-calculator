@@ -19,6 +19,14 @@ HOW TO USE
 4. fill in your hourly rate and your weekly hours, then select your state and your filing status
 
 
+WHAT THIS DOES CALCULATE
+----------------------------
+1. Your income
+
+2. the taxes you pay
+
+3. the taxes you pay if you're self-employed (1099/contracted)
+
 WHAT THIS DOESNT CALCULATE
 ------------------------------
 it does not calculate for things like property tax or children (however i will update it to do as such at some point)
