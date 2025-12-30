@@ -425,12 +425,12 @@ FILING_REQUIREMENTS_2024 = {
 FILING_REQUIREMENTS_2025 = {
     "Single": {"under_65": 15750, "65_or_older": 17000},
     "Married Filing Jointly": {
-        "both_under_65": 30000,
+        "both_under_65": 31500,
         "one_65_or_older": 31550,
         "both_65_or_older": 33100
     },
     "Married Filing Separately": {"any_age": 5},
-    "Head of Household": {"under_65": 22500, "65_or_older": 24500},
+    "Head of Household": {"under_65": 23625, "65_or_older": 24500},
 }
 
 FILING_REQUIREMENTS = {2024: FILING_REQUIREMENTS_2024, 2025: FILING_REQUIREMENTS_2025}
