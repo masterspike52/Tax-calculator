@@ -65,7 +65,7 @@ FEDERAL_BRACKETS_2025 = {
 
 STANDARD_DEDUCTIONS = {
     2024: {"Single": 14600, "Married Filing Jointly": 29200, "Married Filing Separately": 14600, "Head of Household": 21900},
-    2025: {"Single": 15000, "Married Filing Jointly": 30000, "Married Filing Separately": 15000, "Head of Household": 22500}
+    2025: {"Single": 15750, "Married Filing Jointly": 31500, "Married Filing Separately": 15000, "Head of Household": 23625}
 }
 
 FICA_RATES = {
@@ -89,6 +89,15 @@ ADDITIONAL_MEDICARE_THRESHOLDS = {
     "Married Filing Jointly": 250000,
     "Married Filing Separately": 125000,
     "Head of Household": 200000
+}
+
+# Self-Employment Tax Rates
+SE_TAX_RATES = {
+    "ss_rate": 0.124,      # 12.4% (both portions)
+    "medicare_rate": 0.029, # 2.9% (both portions)
+    "additional_medicare_rate": 0.009,  # 0.9% (same as employee)
+    "deductible_portion": 0.5,  # 50% of SE tax is deductible
+    "net_earnings_factor": 0.9235  # 92.35% of net self-employment income
 }
 
 # State Tax Data with Progressive Brackets (2024)
@@ -426,6 +435,9 @@ FILING_REQUIREMENTS_2025 = {
 
 FILING_REQUIREMENTS = {2024: FILING_REQUIREMENTS_2024, 2025: FILING_REQUIREMENTS_2025}
 
+# Self-employment filing threshold
+SE_FILING_THRESHOLD = 400  # Must file if SE income >= $400
+
 
 class TaxCalculator:
     def __init__(self, tax_year: int = 2024):
@@ -493,6 +505,51 @@ class TaxCalculator:
             "total_fica": total_fica
         }
 
+    def calculate_self_employment_tax(self, gross_income: float, filing_status: str) -> dict:
+        """
+        Calculate self-employment tax.
+        SE tax applies to 92.35% of net self-employment income.
+        """
+        # Net earnings from self-employment (92.35% of gross)
+        net_se_earnings = gross_income * SE_TAX_RATES["net_earnings_factor"]
+        
+        # Social Security portion (capped at wage base)
+        ss_wage_base = self.fica["ss_cap"]
+        ss_taxable = min(net_se_earnings, ss_wage_base)
+        ss_tax = ss_taxable * SE_TAX_RATES["ss_rate"]
+        
+        # Medicare portion (no cap)
+        medicare_tax = net_se_earnings * SE_TAX_RATES["medicare_rate"]
+        
+        # Additional Medicare Tax (0.9% on earnings above threshold)
+        additional_medicare_threshold = ADDITIONAL_MEDICARE_THRESHOLDS[filing_status]
+        additional_medicare_tax = 0
+        additional_medicare_earnings = 0
+        
+        if net_se_earnings > additional_medicare_threshold:
+            additional_medicare_earnings = net_se_earnings - additional_medicare_threshold
+            additional_medicare_tax = additional_medicare_earnings * SE_TAX_RATES["additional_medicare_rate"]
+        
+        # Total SE Tax
+        total_se_tax = ss_tax + medicare_tax + additional_medicare_tax
+        
+        # Deductible portion (50% of SS + Medicare, NOT additional Medicare)
+        deductible_se_tax = (ss_tax + medicare_tax) * SE_TAX_RATES["deductible_portion"]
+        
+        return {
+            "gross_se_income": gross_income,
+            "net_se_earnings": net_se_earnings,
+            "ss_wage_base": ss_wage_base,
+            "ss_taxable": ss_taxable,
+            "ss_tax": ss_tax,
+            "medicare_tax": medicare_tax,
+            "additional_medicare_threshold": additional_medicare_threshold,
+            "additional_medicare_earnings": additional_medicare_earnings,
+            "additional_medicare_tax": additional_medicare_tax,
+            "total_se_tax": total_se_tax,
+            "deductible_se_tax": deductible_se_tax,
+        }
+
     def calculate_state_tax(self, taxable_income: float, state: str) -> Tuple[float, List[dict], str]:
         """Calculate state tax with breakdown for progressive states."""
         if state not in STATE_TAX_DATA:
@@ -544,7 +601,8 @@ class TaxCalculator:
         return 0, [], "none"
 
     def check_filing_requirement(self, gross_income: float, filing_status: str,
-                                  age_65_or_older: bool, spouse_65_or_older: bool = False) -> dict:
+                                  age_65_or_older: bool, spouse_65_or_older: bool = False,
+                                  is_self_employed: bool = False) -> dict:
         """Check if taxpayer is required to file based on IRS requirements."""
         requirements = self.filing_requirements[filing_status]
 
@@ -561,6 +619,12 @@ class TaxCalculator:
             threshold = requirements["any_age"]
 
         must_file = gross_income >= threshold
+        
+        # Self-employed must file if SE income >= $400
+        se_filing_required = False
+        if is_self_employed and gross_income >= SE_FILING_THRESHOLD:
+            se_filing_required = True
+            must_file = True
 
         special_circumstances = [
             "You had self-employment income over $400",
@@ -582,35 +646,53 @@ class TaxCalculator:
             "must_file": must_file,
             "threshold": threshold,
             "gross_income": gross_income,
-            "amount_over": gross_income - threshold if must_file else 0,
-            "amount_under": threshold - gross_income if not must_file else 0,
+            "amount_over": gross_income - threshold if gross_income >= threshold else 0,
+            "amount_under": threshold - gross_income if gross_income < threshold else 0,
             "special_circumstances": special_circumstances,
             "reasons_to_file_anyway": reasons_to_file_anyway,
+            "se_filing_required": se_filing_required,
         }
 
     def calculate_all_taxes(self, hourly_rate: float, hours_per_week: float,
                             filing_status: str, state: str,
                             age_65_or_older: bool = False,
-                            spouse_65_or_older: bool = False) -> dict:
+                            spouse_65_or_older: bool = False,
+                            is_self_employed: bool = False) -> dict:
         weekly_gross = hourly_rate * hours_per_week
         annual_gross = weekly_gross * 52
 
+        # Calculate employment taxes based on employment type
+        if is_self_employed:
+            se_tax_info = self.calculate_self_employment_tax(annual_gross, filing_status)
+            fica = None  # No regular FICA for self-employed
+            
+            # SE tax deduction reduces taxable income
+            se_tax_deduction = se_tax_info["deductible_se_tax"]
+            employment_taxes = se_tax_info["total_se_tax"]
+        else:
+            fica = self.calculate_fica_taxes(annual_gross, filing_status)
+            se_tax_info = None
+            se_tax_deduction = 0
+            employment_taxes = fica["total_fica"]
+
         standard_deduction = self.standard_deductions[filing_status]
-        taxable_income = max(0, annual_gross - standard_deduction)
+        
+        # For self-employed: AGI = Gross - SE Tax Deduction
+        adjusted_gross_income = annual_gross - se_tax_deduction
+        
+        # Taxable income = AGI - Standard Deduction
+        taxable_income = max(0, adjusted_gross_income - standard_deduction)
 
         federal_tax, federal_breakdown = self.calculate_federal_tax(taxable_income, filing_status)
 
-        # FICA taxes with Additional Medicare
-        fica = self.calculate_fica_taxes(annual_gross, filing_status)
-
         state_tax, state_breakdown, state_tax_type = self.calculate_state_tax(taxable_income, state)
 
-        total_tax = federal_tax + fica["total_fica"] + state_tax
+        total_tax = federal_tax + employment_taxes + state_tax
         annual_take_home = annual_gross - total_tax
         total_hours = hours_per_week * 52
 
         filing_info = self.check_filing_requirement(
-            annual_gross, filing_status, age_65_or_older, spouse_65_or_older
+            annual_gross, filing_status, age_65_or_older, spouse_65_or_older, is_self_employed
         )
 
         return {
@@ -618,11 +700,16 @@ class TaxCalculator:
             "hours_per_week": hours_per_week,
             "weekly_gross": weekly_gross,
             "annual_gross": annual_gross,
+            "is_self_employed": is_self_employed,
+            "se_tax_info": se_tax_info,
+            "se_tax_deduction": se_tax_deduction,
+            "adjusted_gross_income": adjusted_gross_income,
             "standard_deduction": standard_deduction,
             "taxable_income": taxable_income,
             "federal_tax": federal_tax,
             "federal_breakdown": federal_breakdown,
             "fica": fica,
+            "employment_taxes": employment_taxes,
             "state_tax": state_tax,
             "state_breakdown": state_breakdown,
             "state_tax_type": state_tax_type,
@@ -640,7 +727,7 @@ class TaxCalculatorGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Hourly Tax Calculator 2024/2025")
-        self.root.geometry("800x850")
+        self.root.geometry("800x900")
         self.root.configure(bg="#f5f5f5")
         self.calculator = TaxCalculator(2024)
         self.results = None
@@ -697,6 +784,13 @@ class TaxCalculatorGUI:
         self.spouse_age_label.grid_remove()
         self.spouse_age_check.grid_remove()
 
+        # Self-Employment Checkbox
+        ttk.Label(input_frame, text="Employment Type:").grid(row=7, column=0, sticky="w", pady=8)
+        self.self_employed_var = tk.BooleanVar(value=False)
+        self.self_employed_check = ttk.Checkbutton(input_frame, text="I am self-employed (1099/contractor)", 
+                                                    variable=self.self_employed_var)
+        self.self_employed_check.grid(row=7, column=1, sticky="w", pady=8)
+
         calc_btn = tk.Button(main_frame, text="Calculate Taxes", command=self.calculate,
                              font=('Helvetica', 12, 'bold'), bg="#4CAF50", fg="white",
                              padx=30, pady=10, cursor="hand2")
@@ -725,6 +819,7 @@ class TaxCalculatorGUI:
             tax_year = int(self.tax_year_var.get())
             age_65_or_older = self.age_65_var.get()
             spouse_65_or_older = self.spouse_65_var.get()
+            is_self_employed = self.self_employed_var.get()
 
             if hourly_rate <= 0 or hours_per_week <= 0:
                 messagebox.showerror("Error", "Please enter positive values.")
@@ -733,7 +828,7 @@ class TaxCalculatorGUI:
             self.calculator = TaxCalculator(tax_year)
             self.results = self.calculator.calculate_all_taxes(
                 hourly_rate, hours_per_week, filing_status, state,
-                age_65_or_older, spouse_65_or_older
+                age_65_or_older, spouse_65_or_older, is_self_employed
             )
             self.display_results()
 
@@ -749,7 +844,6 @@ class TaxCalculatorGUI:
 
         r = self.results
         f = r["filing_info"]
-        fica = r["fica"]
 
         canvas = tk.Canvas(self.results_frame, bg="#ffffff", highlightthickness=0)
         scrollbar = ttk.Scrollbar(self.results_frame, orient="vertical", command=canvas.yview)
@@ -766,13 +860,24 @@ class TaxCalculatorGUI:
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+        # Employment Type Banner
+        if r['is_self_employed']:
+            emp_frame = tk.Frame(scroll_frame, bg="#ff9800", padx=15, pady=8)
+            emp_frame.pack(fill="x", pady=(0, 5))
+            tk.Label(emp_frame, text="💼 SELF-EMPLOYED / 1099 CONTRACTOR", 
+                    font=('Helvetica', 10, 'bold'), bg="#ff9800", fg="white").pack()
+
         # Filing Requirement Banner
         filing_frame = tk.Frame(scroll_frame, bg="#d32f2f" if f["must_file"] else "#388e3c", padx=15, pady=12)
         filing_frame.pack(fill="x", pady=(0, 10))
 
         if f["must_file"]:
-            filing_text = "⚠️ YOU ARE REQUIRED TO FILE A TAX RETURN"
-            filing_detail = f"Your gross income (${f['gross_income']:,.2f}) exceeds the filing threshold (${f['threshold']:,.2f}) by ${f['amount_over']:,.2f}"
+            if f.get("se_filing_required"):
+                filing_text = "⚠️ YOU ARE REQUIRED TO FILE A TAX RETURN"
+                filing_detail = f"Self-employment income (${f['gross_income']:,.2f}) exceeds $400 threshold"
+            else:
+                filing_text = "⚠️ YOU ARE REQUIRED TO FILE A TAX RETURN"
+                filing_detail = f"Your gross income (${f['gross_income']:,.2f}) exceeds the filing threshold (${f['threshold']:,.2f}) by ${f['amount_over']:,.2f}"
         else:
             filing_text = "✓ YOU ARE NOT REQUIRED TO FILE A TAX RETURN"
             filing_detail = f"Your gross income (${f['gross_income']:,.2f}) is below the filing threshold (${f['threshold']:,.2f}) by ${f['amount_under']:,.2f}"
@@ -809,35 +914,63 @@ class TaxCalculatorGUI:
             ("Hours/Week:", f"{r['hours_per_week']:.1f}", "#333"),
             ("Weekly Gross:", f"${r['weekly_gross']:,.2f}", "#333"),
             ("Annual Gross:", f"${r['annual_gross']:,.2f}", "#2e7d32"),
-            ("", "", ""),
-            ("DEDUCTIONS", None, None),
-            ("Standard Deduction:", f"-${r['standard_deduction']:,.2f}", "#333"),
-            ("Taxable Income:", f"${r['taxable_income']:,.2f}", "#333"),
-            ("", "", ""),
-            ("FEDERAL TAX", None, None),
         ]
+
+        # Self-Employment Tax Section or FICA Section
+        if r['is_self_employed']:
+            se = r['se_tax_info']
+            data.append(("", "", ""))
+            data.append(("SELF-EMPLOYMENT TAX", None, None))
+            data.append((f"Gross SE Income:", f"${se['gross_se_income']:,.2f}", "#333"))
+            data.append((f"Net SE Earnings (92.35%):", f"${se['net_se_earnings']:,.2f}", "#333"))
+            data.append(("", "", ""))
+            
+            ss_note = f" (capped at ${se['ss_wage_base']:,.0f})" if se['net_se_earnings'] > se['ss_wage_base'] else ""
+            data.append((f"Social Security (12.4%){ss_note}:", f"${se['ss_tax']:,.2f}", "#c62828"))
+            data.append(("Medicare (2.9%):", f"${se['medicare_tax']:,.2f}", "#c62828"))
+            
+            if se['additional_medicare_tax'] > 0:
+                data.append((f"Additional Medicare (0.9%):", f"${se['additional_medicare_tax']:,.2f}", "#c62828"))
+                data.append((f"  (on ${se['additional_medicare_earnings']:,.2f} over ${se['additional_medicare_threshold']:,.0f})", "", "#666"))
+            
+            data.append(("SE Tax Total:", f"${se['total_se_tax']:,.2f}", "#c62828"))
+            data.append(("", "", ""))
+            data.append(("DEDUCTIONS", None, None))
+            data.append(("SE Tax Deduction (50%):", f"-${r['se_tax_deduction']:,.2f}", "#2e7d32"))
+            data.append(("Adjusted Gross Income:", f"${r['adjusted_gross_income']:,.2f}", "#333"))
+            data.append(("Standard Deduction:", f"-${r['standard_deduction']:,.2f}", "#333"))
+            data.append(("Taxable Income:", f"${r['taxable_income']:,.2f}", "#333"))
+        else:
+            fica = r['fica']
+            data.append(("", "", ""))
+            data.append(("DEDUCTIONS", None, None))
+            data.append(("Standard Deduction:", f"-${r['standard_deduction']:,.2f}", "#333"))
+            data.append(("Taxable Income:", f"${r['taxable_income']:,.2f}", "#333"))
+            
+            data.append(("", "", ""))
+            data.append(("FICA TAXES (Employee)", None, None))
+            
+            # Social Security
+            ss_note = f" (capped at ${fica['ss_cap']:,.0f})" if r['annual_gross'] > fica['ss_cap'] else ""
+            data.append((f"Social Security (6.2%){ss_note}:", f"${fica['ss_tax']:,.2f}", "#c62828"))
+
+            # Medicare
+            data.append(("Medicare (1.45%):", f"${fica['medicare_tax']:,.2f}", "#c62828"))
+
+            # Additional Medicare Tax (if applicable)
+            if fica['additional_medicare_tax'] > 0:
+                data.append((f"Additional Medicare (0.9%):", f"${fica['additional_medicare_tax']:,.2f}", "#c62828"))
+                data.append((f"  (on ${fica['additional_medicare_wages']:,.2f} over ${fica['additional_medicare_threshold']:,.0f})", "", "#666"))
+
+            data.append(("FICA Total:", f"${fica['total_fica']:,.2f}", "#c62828"))
+
+        data.append(("", "", ""))
+        data.append(("FEDERAL TAX", None, None))
 
         # Add federal breakdown
         for b in r['federal_breakdown']:
             data.append((f"  {b['bracket']} @ {b['rate']}:", f"${b['tax']:,.2f}", "#c62828"))
         data.append(("Federal Tax Total:", f"${r['federal_tax']:,.2f}", "#c62828"))
-
-        data.append(("", "", ""))
-        data.append(("FICA TAXES", None, None))
-
-        # Social Security
-        ss_note = f" (capped at ${fica['ss_cap']:,.0f})" if r['annual_gross'] > fica['ss_cap'] else ""
-        data.append((f"Social Security (6.2%){ss_note}:", f"${fica['ss_tax']:,.2f}", "#c62828"))
-
-        # Medicare
-        data.append(("Medicare (1.45%):", f"${fica['medicare_tax']:,.2f}", "#c62828"))
-
-        # Additional Medicare Tax (if applicable)
-        if fica['additional_medicare_tax'] > 0:
-            data.append((f"Additional Medicare (0.9%):", f"${fica['additional_medicare_tax']:,.2f}", "#c62828"))
-            data.append((f"  (on ${fica['additional_medicare_wages']:,.2f} over ${fica['additional_medicare_threshold']:,.0f})", "", "#666"))
-
-        data.append(("FICA Total:", f"${fica['total_fica']:,.2f}", "#c62828"))
 
         data.append(("", "", ""))
 
@@ -880,7 +1013,9 @@ class TaxCalculatorGUI:
                 row_idx += 1
                 continue
             else:
-                bold = label in ["Annual Gross:", "TOTAL TAXES:", "Hourly (effective):", "Federal Tax Total:", "State Tax Total:", "FICA Total:"]
+                bold = label in ["Annual Gross:", "TOTAL TAXES:", "Hourly (effective):", 
+                                "Federal Tax Total:", "State Tax Total:", "FICA Total:", 
+                                "SE Tax Total:", "Adjusted Gross Income:"]
                 font = ('Helvetica', 10, 'bold') if bold else ('Helvetica', 10)
                 tk.Label(details, text=label, font=font, bg="#ffffff").grid(row=row_idx, column=0, sticky="w", pady=2)
                 if value:
@@ -899,9 +1034,32 @@ class TaxCalculatorGUI:
         tk.Label(filing_info_frame, text=f"Your Gross Income: ${f['gross_income']:,.2f}",
                  font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
 
-        # Additional Medicare info
-        tk.Label(filing_info_frame, text=f"\nAdditional Medicare Tax Threshold ({self.filing_var.get()}): ${fica['additional_medicare_threshold']:,.0f}",
-                 font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+        # Self-employment specific info
+        if r['is_self_employed']:
+            se = r['se_tax_info']
+            tk.Label(filing_info_frame, text=f"\n💼 SELF-EMPLOYMENT INFO",
+                     font=('Helvetica', 10, 'bold'), bg="#f5f5f5", fg="#e65100").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"SE Filing Threshold: $400",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"Net SE Earnings: ${se['net_se_earnings']:,.2f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"SE Tax Deduction (reduces AGI): ${r['se_tax_deduction']:,.2f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"Additional Medicare Threshold ({self.filing_var.get()}): ${se['additional_medicare_threshold']:,.0f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            
+            # Quarterly estimated tax reminder
+            quarterly_tax = r['total_tax'] / 4
+            tk.Label(filing_info_frame, text=f"\n📅 ESTIMATED QUARTERLY PAYMENTS",
+                     font=('Helvetica', 10, 'bold'), bg="#f5f5f5", fg="#1976d2").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"Estimated quarterly payment: ${quarterly_tax:,.2f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text="Due dates: Apr 15, Jun 15, Sep 15, Jan 15",
+                     font=('Helvetica', 9), bg="#f5f5f5").pack(anchor="w")
+        else:
+            fica = r['fica']
+            tk.Label(filing_info_frame, text=f"\nAdditional Medicare Tax Threshold ({self.filing_var.get()}): ${fica['additional_medicare_threshold']:,.0f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
 
         if not f["must_file"]:
             tk.Label(filing_info_frame, text="\n⚠️ You may still need to file if:",
