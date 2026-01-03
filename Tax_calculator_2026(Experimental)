@@ -1,0 +1,1052 @@
+import tkinter as tk
+from tkinter import ttk, messagebox
+from dataclasses import dataclass
+from typing import List, Tuple
+
+@dataclass
+class TaxBracket:
+    min_income: float
+    max_income: float
+    rate: float
+
+# 2026 Federal Tax Brackets (ESTIMATED - based on ~2.8% inflation adjustment)
+FEDERAL_BRACKETS_2026 = {
+    "Single": [
+        TaxBracket(0, 12250, 0.10), TaxBracket(12250, 49850, 0.12),
+        TaxBracket(49850, 106250, 0.22), TaxBracket(106250, 202850, 0.24),
+        TaxBracket(202850, 257550, 0.32), TaxBracket(257550, 644050, 0.35),
+        TaxBracket(644050, float('inf'), 0.37),
+    ],
+    "Married Filing Jointly": [
+        TaxBracket(0, 24500, 0.10), TaxBracket(24500, 99700, 0.12),
+        TaxBracket(99700, 212500, 0.22), TaxBracket(212500, 405700, 0.24),
+        TaxBracket(405700, 515100, 0.32), TaxBracket(515100, 772650, 0.35),
+        TaxBracket(772650, float('inf'), 0.37),
+    ],
+    "Married Filing Separately": [
+        TaxBracket(0, 12250, 0.10), TaxBracket(12250, 49850, 0.12),
+        TaxBracket(49850, 106250, 0.22), TaxBracket(106250, 202850, 0.24),
+        TaxBracket(202850, 257550, 0.32), TaxBracket(257550, 386300, 0.35),
+        TaxBracket(386300, float('inf'), 0.37),
+    ],
+    "Head of Household": [
+        TaxBracket(0, 17475, 0.10), TaxBracket(17475, 66700, 0.12),
+        TaxBracket(66700, 106250, 0.22), TaxBracket(106250, 202850, 0.24),
+        TaxBracket(202850, 257550, 0.32), TaxBracket(257550, 644050, 0.35),
+        TaxBracket(644050, float('inf'), 0.37),
+    ],
+}
+
+# 2026 Standard Deductions (ESTIMATED)
+STANDARD_DEDUCTIONS = {
+    "Single": 15450,
+    "Married Filing Jointly": 30850,
+    "Married Filing Separately": 15450,
+    "Head of Household": 23150
+}
+
+# 2026 FICA Rates (ESTIMATED)
+FICA_RATES = {
+    "ss_rate": 0.062,
+    "ss_cap": 181200,  # Estimated ~2.9% increase from 2025
+    "medicare_rate": 0.0145,
+    "additional_medicare_rate": 0.009
+}
+
+# Additional Medicare Tax thresholds by filing status
+ADDITIONAL_MEDICARE_THRESHOLDS = {
+    "Single": 200000,
+    "Married Filing Jointly": 250000,
+    "Married Filing Separately": 125000,
+    "Head of Household": 200000
+}
+
+# Self-Employment Tax Rates
+SE_TAX_RATES = {
+    "ss_rate": 0.124,      # 12.4% (both portions)
+    "medicare_rate": 0.029, # 2.9% (both portions)
+    "additional_medicare_rate": 0.009,  # 0.9% (same as employee)
+    "deductible_portion": 0.5,  # 50% of SE tax is deductible
+    "net_earnings_factor": 0.9235  # 92.35% of net self-employment income
+}
+
+# State Tax Data with Progressive Brackets
+STATE_TAX_DATA = {
+    "Alabama": {
+        "type": "progressive",
+        "brackets": [
+            (0, 500, 0.02),
+            (500, 3000, 0.04),
+            (3000, float('inf'), 0.05)
+        ]
+    },
+    "Alaska": {"type": "none", "rate": 0},
+    "Arizona": {"type": "flat", "rate": 0.025},
+    "Arkansas": {
+        "type": "progressive",
+        "brackets": [
+            (0, 4400, 0.02),
+            (4400, 8800, 0.04),
+            (8800, float('inf'), 0.044)
+        ]
+    },
+    "California": {
+        "type": "progressive",
+        "brackets": [
+            (0, 10412, 0.01),
+            (10412, 24684, 0.02),
+            (24684, 38959, 0.04),
+            (38959, 54081, 0.06),
+            (54081, 68350, 0.08),
+            (68350, 349137, 0.093),
+            (349137, 418961, 0.103),
+            (418961, 698271, 0.113),
+            (698271, float('inf'), 0.123)
+        ]
+    },
+    "Colorado": {"type": "flat", "rate": 0.044},
+    "Connecticut": {
+        "type": "progressive",
+        "brackets": [
+            (0, 10000, 0.03),
+            (10000, 50000, 0.05),
+            (50000, 100000, 0.055),
+            (100000, 200000, 0.06),
+            (200000, 250000, 0.065),
+            (250000, 500000, 0.069),
+            (500000, float('inf'), 0.0699)
+        ]
+    },
+    "Delaware": {
+        "type": "progressive",
+        "brackets": [
+            (0, 2000, 0.0),
+            (2000, 5000, 0.022),
+            (5000, 10000, 0.039),
+            (10000, 20000, 0.048),
+            (20000, 25000, 0.052),
+            (25000, 60000, 0.0555),
+            (60000, float('inf'), 0.066)
+        ]
+    },
+    "Florida": {"type": "none", "rate": 0},
+    "Georgia": {"type": "flat", "rate": 0.0549},
+    "Hawaii": {
+        "type": "progressive",
+        "brackets": [
+            (0, 2400, 0.014),
+            (2400, 4800, 0.032),
+            (4800, 9600, 0.055),
+            (9600, 14400, 0.064),
+            (14400, 19200, 0.068),
+            (19200, 24000, 0.072),
+            (24000, 36000, 0.076),
+            (36000, 48000, 0.079),
+            (48000, 150000, 0.0825),
+            (150000, 175000, 0.09),
+            (175000, 200000, 0.10),
+            (200000, float('inf'), 0.11)
+        ]
+    },
+    "Idaho": {"type": "flat", "rate": 0.058},
+    "Illinois": {"type": "flat", "rate": 0.0495},
+    "Indiana": {"type": "flat", "rate": 0.0305},
+    "Iowa": {"type": "flat", "rate": 0.038},
+    "Kansas": {
+        "type": "progressive",
+        "brackets": [
+            (0, 15000, 0.031),
+            (15000, 30000, 0.0525),
+            (30000, float('inf'), 0.057)
+        ]
+    },
+    "Kentucky": {"type": "flat", "rate": 0.04},
+    "Louisiana": {
+        "type": "progressive",
+        "brackets": [
+            (0, 12500, 0.0185),
+            (12500, 50000, 0.035),
+            (50000, float('inf'), 0.0425)
+        ]
+    },
+    "Maine": {
+        "type": "progressive",
+        "brackets": [
+            (0, 24500, 0.058),
+            (24500, 58050, 0.0675),
+            (58050, float('inf'), 0.0715)
+        ]
+    },
+    "Maryland": {
+        "type": "progressive",
+        "brackets": [
+            (0, 1000, 0.02),
+            (1000, 2000, 0.03),
+            (2000, 3000, 0.04),
+            (3000, 100000, 0.0475),
+            (100000, 125000, 0.05),
+            (125000, 150000, 0.0525),
+            (150000, 250000, 0.055),
+            (250000, float('inf'), 0.0575)
+        ]
+    },
+    "Massachusetts": {
+        "type": "progressive",
+        "brackets": [
+            (0, 1000000, 0.05),
+            (1000000, float('inf'), 0.09)
+        ]
+    },
+    "Michigan": {"type": "flat", "rate": 0.0425},
+    "Minnesota": {
+        "type": "progressive",
+        "brackets": [
+            (0, 30070, 0.0535),
+            (30070, 98760, 0.068),
+            (98760, 183340, 0.0785),
+            (183340, float('inf'), 0.0985)
+        ]
+    },
+    "Mississippi": {"type": "flat", "rate": 0.047},
+    "Missouri": {
+        "type": "progressive",
+        "brackets": [
+            (0, 1207, 0.02),
+            (1207, 2414, 0.025),
+            (2414, 3621, 0.03),
+            (3621, 4828, 0.035),
+            (4828, 6035, 0.04),
+            (6035, 7242, 0.045),
+            (7242, 8449, 0.05),
+            (8449, float('inf'), 0.0495)
+        ]
+    },
+    "Montana": {"type": "flat", "rate": 0.0575},
+    "Nebraska": {
+        "type": "progressive",
+        "brackets": [
+            (0, 3700, 0.0246),
+            (3700, 22170, 0.0351),
+            (22170, 35730, 0.0501),
+            (35730, float('inf'), 0.0584)
+        ]
+    },
+    "Nevada": {"type": "none", "rate": 0},
+    "New Hampshire": {"type": "none", "rate": 0},
+    "New Jersey": {
+        "type": "progressive",
+        "brackets": [
+            (0, 20000, 0.014),
+            (20000, 35000, 0.0175),
+            (35000, 40000, 0.035),
+            (40000, 75000, 0.05525),
+            (75000, 500000, 0.0637),
+            (500000, 1000000, 0.0897),
+            (1000000, float('inf'), 0.1075)
+        ]
+    },
+    "New Mexico": {
+        "type": "progressive",
+        "brackets": [
+            (0, 5500, 0.017),
+            (5500, 11000, 0.032),
+            (11000, 16000, 0.047),
+            (16000, 210000, 0.049),
+            (210000, float('inf'), 0.059)
+        ]
+    },
+    "New York": {
+        "type": "progressive",
+        "brackets": [
+            (0, 8500, 0.04),
+            (8500, 11700, 0.045),
+            (11700, 13900, 0.0525),
+            (13900, 80650, 0.0585),
+            (80650, 215400, 0.0625),
+            (215400, 1077550, 0.0685),
+            (1077550, 5000000, 0.0965),
+            (5000000, 25000000, 0.103),
+            (25000000, float('inf'), 0.109)
+        ]
+    },
+    "North Carolina": {"type": "flat", "rate": 0.0525},
+    "North Dakota": {
+        "type": "progressive",
+        "brackets": [
+            (0, 44725, 0.0195),
+            (44725, 225975, 0.025),
+            (225975, float('inf'), 0.025)
+        ]
+    },
+    "Ohio": {
+        "type": "progressive",
+        "brackets": [
+            (0, 26050, 0.0),
+            (26050, 100000, 0.0275),
+            (100000, float('inf'), 0.035)
+        ]
+    },
+    "Oklahoma": {
+        "type": "progressive",
+        "brackets": [
+            (0, 1000, 0.0025),
+            (1000, 2500, 0.0075),
+            (2500, 3750, 0.0175),
+            (3750, 4900, 0.0275),
+            (4900, 7200, 0.0375),
+            (7200, float('inf'), 0.0475)
+        ]
+    },
+    "Oregon": {
+        "type": "progressive",
+        "brackets": [
+            (0, 4050, 0.0475),
+            (4050, 10200, 0.0675),
+            (10200, 125000, 0.0875),
+            (125000, float('inf'), 0.099)
+        ]
+    },
+    "Pennsylvania": {"type": "flat", "rate": 0.0307},
+    "Rhode Island": {
+        "type": "progressive",
+        "brackets": [
+            (0, 73450, 0.0375),
+            (73450, 166950, 0.0475),
+            (166950, float('inf'), 0.0599)
+        ]
+    },
+    "South Carolina": {
+        "type": "progressive",
+        "brackets": [
+            (0, 3200, 0.0),
+            (3200, 16040, 0.03),
+            (16040, float('inf'), 0.064)
+        ]
+    },
+    "South Dakota": {"type": "none", "rate": 0},
+    "Tennessee": {"type": "none", "rate": 0},
+    "Texas": {"type": "none", "rate": 0},
+    "Utah": {"type": "flat", "rate": 0.0465},
+    "Vermont": {
+        "type": "progressive",
+        "brackets": [
+            (0, 45400, 0.0335),
+            (45400, 110050, 0.066),
+            (110050, 229550, 0.076),
+            (229550, float('inf'), 0.0875)
+        ]
+    },
+    "Virginia": {
+        "type": "progressive",
+        "brackets": [
+            (0, 3000, 0.02),
+            (3000, 5000, 0.03),
+            (5000, 17000, 0.05),
+            (17000, float('inf'), 0.0575)
+        ]
+    },
+    "Washington": {"type": "none", "rate": 0},
+    "West Virginia": {
+        "type": "progressive",
+        "brackets": [
+            (0, 10000, 0.0236),
+            (10000, 25000, 0.0315),
+            (25000, 40000, 0.0354),
+            (40000, 60000, 0.0472),
+            (60000, float('inf'), 0.0512)
+        ]
+    },
+    "Wisconsin": {
+        "type": "progressive",
+        "brackets": [
+            (0, 14320, 0.035),
+            (14320, 28640, 0.044),
+            (28640, 315310, 0.053),
+            (315310, float('inf'), 0.0765)
+        ]
+    },
+    "Wyoming": {"type": "none", "rate": 0},
+    "District of Columbia": {
+        "type": "progressive",
+        "brackets": [
+            (0, 10000, 0.04),
+            (10000, 40000, 0.06),
+            (40000, 60000, 0.065),
+            (60000, 250000, 0.085),
+            (250000, 500000, 0.0925),
+            (500000, 1000000, 0.0975),
+            (1000000, float('inf'), 0.1075)
+        ]
+    },
+}
+
+# 2026 IRS Filing Requirements (ESTIMATED)
+FILING_REQUIREMENTS = {
+    "Single": {"under_65": 15450, "65_or_older": 17400},
+    "Married Filing Jointly": {
+        "both_under_65": 30850,
+        "one_65_or_older": 32450,
+        "both_65_or_older": 34050
+    },
+    "Married Filing Separately": {"any_age": 5},
+    "Head of Household": {"under_65": 23150, "65_or_older": 25150},
+}
+
+# Self-employment filing threshold
+SE_FILING_THRESHOLD = 400  # Must file if SE income >= $400
+
+
+class TaxCalculator:
+    def __init__(self):
+        self.tax_year = 2026
+        self.federal_brackets = FEDERAL_BRACKETS_2026
+        self.fica = FICA_RATES
+        self.standard_deductions = STANDARD_DEDUCTIONS
+        self.filing_requirements = FILING_REQUIREMENTS
+
+    def calculate_federal_tax(self, taxable_income: float, filing_status: str) -> Tuple[float, List[dict]]:
+        brackets = self.federal_brackets[filing_status]
+        total_tax = 0
+        breakdown = []
+        remaining = taxable_income
+
+        for bracket in brackets:
+            if remaining <= 0:
+                break
+            bracket_size = bracket.max_income - bracket.min_income
+            taxable_in_bracket = min(remaining, bracket_size)
+            bracket_tax = taxable_in_bracket * bracket.rate
+            total_tax += bracket_tax
+
+            if taxable_in_bracket > 0:
+                breakdown.append({
+                    "bracket": f"${bracket.min_income:,.0f}-${bracket.max_income:,.0f}" if bracket.max_income != float('inf') else f"${bracket.min_income:,.0f}+",
+                    "rate": f"{bracket.rate * 100:.1f}%",
+                    "income": taxable_in_bracket,
+                    "tax": bracket_tax
+                })
+            remaining -= taxable_in_bracket
+
+        return total_tax, breakdown
+
+    def calculate_fica_taxes(self, gross_income: float, filing_status: str) -> dict:
+        """Calculate Social Security and Medicare taxes including Additional Medicare Tax."""
+        # Social Security (capped at wage base limit)
+        ss_taxable = min(gross_income, self.fica["ss_cap"])
+        ss_tax = ss_taxable * self.fica["ss_rate"]
+
+        # Regular Medicare (no cap)
+        medicare_tax = gross_income * self.fica["medicare_rate"]
+
+        # Additional Medicare Tax (0.9% on wages above threshold)
+        additional_medicare_threshold = ADDITIONAL_MEDICARE_THRESHOLDS[filing_status]
+        additional_medicare_tax = 0
+        additional_medicare_wages = 0
+
+        if gross_income > additional_medicare_threshold:
+            additional_medicare_wages = gross_income - additional_medicare_threshold
+            additional_medicare_tax = additional_medicare_wages * self.fica["additional_medicare_rate"]
+
+        total_medicare = medicare_tax + additional_medicare_tax
+        total_fica = ss_tax + total_medicare
+
+        return {
+            "ss_taxable_wages": ss_taxable,
+            "ss_tax": ss_tax,
+            "ss_cap": self.fica["ss_cap"],
+            "medicare_tax": medicare_tax,
+            "additional_medicare_threshold": additional_medicare_threshold,
+            "additional_medicare_wages": additional_medicare_wages,
+            "additional_medicare_tax": additional_medicare_tax,
+            "total_medicare": total_medicare,
+            "total_fica": total_fica
+        }
+
+    def calculate_self_employment_tax(self, gross_income: float, filing_status: str) -> dict:
+        """
+        Calculate self-employment tax.
+        SE tax applies to 92.35% of net self-employment income.
+        """
+        # Net earnings from self-employment (92.35% of gross)
+        net_se_earnings = gross_income * SE_TAX_RATES["net_earnings_factor"]
+        
+        # Social Security portion (capped at wage base)
+        ss_wage_base = self.fica["ss_cap"]
+        ss_taxable = min(net_se_earnings, ss_wage_base)
+        ss_tax = ss_taxable * SE_TAX_RATES["ss_rate"]
+        
+        # Medicare portion (no cap)
+        medicare_tax = net_se_earnings * SE_TAX_RATES["medicare_rate"]
+        
+        # Additional Medicare Tax (0.9% on earnings above threshold)
+        additional_medicare_threshold = ADDITIONAL_MEDICARE_THRESHOLDS[filing_status]
+        additional_medicare_tax = 0
+        additional_medicare_earnings = 0
+        
+        if net_se_earnings > additional_medicare_threshold:
+            additional_medicare_earnings = net_se_earnings - additional_medicare_threshold
+            additional_medicare_tax = additional_medicare_earnings * SE_TAX_RATES["additional_medicare_rate"]
+        
+        # Total SE Tax
+        total_se_tax = ss_tax + medicare_tax + additional_medicare_tax
+        
+        # Deductible portion (50% of SS + Medicare, NOT additional Medicare)
+        deductible_se_tax = (ss_tax + medicare_tax) * SE_TAX_RATES["deductible_portion"]
+        
+        return {
+            "gross_se_income": gross_income,
+            "net_se_earnings": net_se_earnings,
+            "ss_wage_base": ss_wage_base,
+            "ss_taxable": ss_taxable,
+            "ss_tax": ss_tax,
+            "medicare_tax": medicare_tax,
+            "additional_medicare_threshold": additional_medicare_threshold,
+            "additional_medicare_earnings": additional_medicare_earnings,
+            "additional_medicare_tax": additional_medicare_tax,
+            "total_se_tax": total_se_tax,
+            "deductible_se_tax": deductible_se_tax,
+        }
+
+    def calculate_state_tax(self, taxable_income: float, state: str) -> Tuple[float, List[dict], str]:
+        """Calculate state tax with breakdown for progressive states."""
+        if state not in STATE_TAX_DATA:
+            return 0, [], "none"
+
+        state_data = STATE_TAX_DATA[state]
+        tax_type = state_data["type"]
+
+        if tax_type == "none":
+            return 0, [], "none"
+
+        elif tax_type == "flat":
+            rate = state_data["rate"]
+            tax = taxable_income * rate
+            breakdown = [{
+                "bracket": "All income",
+                "rate": f"{rate * 100:.2f}%",
+                "income": taxable_income,
+                "tax": tax
+            }] if tax > 0 else []
+            return tax, breakdown, "flat"
+
+        elif tax_type == "progressive":
+            total_tax = 0
+            breakdown = []
+            remaining = taxable_income
+
+            for min_inc, max_inc, rate in state_data["brackets"]:
+                if remaining <= 0:
+                    break
+
+                bracket_size = max_inc - min_inc if max_inc != float('inf') else remaining
+                taxable_in_bracket = min(remaining, bracket_size)
+                bracket_tax = taxable_in_bracket * rate
+                total_tax += bracket_tax
+
+                if taxable_in_bracket > 0 and rate > 0:
+                    breakdown.append({
+                        "bracket": f"${min_inc:,.0f}-${max_inc:,.0f}" if max_inc != float('inf') else f"${min_inc:,.0f}+",
+                        "rate": f"{rate * 100:.2f}%",
+                        "income": taxable_in_bracket,
+                        "tax": bracket_tax
+                    })
+
+                remaining -= taxable_in_bracket
+
+            return total_tax, breakdown, "progressive"
+
+        return 0, [], "none"
+
+    def check_filing_requirement(self, gross_income: float, filing_status: str,
+                                  age_65_or_older: bool, spouse_65_or_older: bool = False,
+                                  is_self_employed: bool = False) -> dict:
+        """Check if taxpayer is required to file based on IRS requirements."""
+        requirements = self.filing_requirements[filing_status]
+
+        if filing_status == "Single" or filing_status == "Head of Household":
+            threshold = requirements["65_or_older"] if age_65_or_older else requirements["under_65"]
+        elif filing_status == "Married Filing Jointly":
+            if age_65_or_older and spouse_65_or_older:
+                threshold = requirements["both_65_or_older"]
+            elif age_65_or_older or spouse_65_or_older:
+                threshold = requirements["one_65_or_older"]
+            else:
+                threshold = requirements["both_under_65"]
+        else:
+            threshold = requirements["any_age"]
+
+        must_file = gross_income >= threshold
+        
+        # Self-employed must file if SE income >= $400
+        se_filing_required = False
+        if is_self_employed and gross_income >= SE_FILING_THRESHOLD:
+            se_filing_required = True
+            must_file = True
+
+        special_circumstances = [
+            "You had self-employment income over $400",
+            "You owe special taxes (AMT, household employment taxes, etc.)",
+            "You received advance payments of the Premium Tax Credit",
+            "You owe taxes on a retirement plan distribution",
+            "You received HSA or MSA distributions",
+        ]
+
+        reasons_to_file_anyway = [
+            "You had federal income tax withheld from your pay",
+            "You qualify for the Earned Income Tax Credit (EITC)",
+            "You qualify for the Child Tax Credit",
+            "You qualify for other refundable credits",
+            "You made estimated tax payments",
+        ]
+
+        return {
+            "must_file": must_file,
+            "threshold": threshold,
+            "gross_income": gross_income,
+            "amount_over": gross_income - threshold if gross_income >= threshold else 0,
+            "amount_under": threshold - gross_income if gross_income < threshold else 0,
+            "special_circumstances": special_circumstances,
+            "reasons_to_file_anyway": reasons_to_file_anyway,
+            "se_filing_required": se_filing_required,
+        }
+
+    def calculate_all_taxes(self, hourly_rate: float, hours_per_week: float,
+                            filing_status: str, state: str,
+                            age_65_or_older: bool = False,
+                            spouse_65_or_older: bool = False,
+                            is_self_employed: bool = False) -> dict:
+        weekly_gross = hourly_rate * hours_per_week
+        annual_gross = weekly_gross * 52
+
+        # Calculate employment taxes based on employment type
+        if is_self_employed:
+            se_tax_info = self.calculate_self_employment_tax(annual_gross, filing_status)
+            fica = None  # No regular FICA for self-employed
+            
+            # SE tax deduction reduces taxable income
+            se_tax_deduction = se_tax_info["deductible_se_tax"]
+            employment_taxes = se_tax_info["total_se_tax"]
+        else:
+            fica = self.calculate_fica_taxes(annual_gross, filing_status)
+            se_tax_info = None
+            se_tax_deduction = 0
+            employment_taxes = fica["total_fica"]
+
+        standard_deduction = self.standard_deductions[filing_status]
+        
+        # For self-employed: AGI = Gross - SE Tax Deduction
+        adjusted_gross_income = annual_gross - se_tax_deduction
+        
+        # Taxable income = AGI - Standard Deduction
+        taxable_income = max(0, adjusted_gross_income - standard_deduction)
+
+        federal_tax, federal_breakdown = self.calculate_federal_tax(taxable_income, filing_status)
+
+        state_tax, state_breakdown, state_tax_type = self.calculate_state_tax(taxable_income, state)
+
+        total_tax = federal_tax + employment_taxes + state_tax
+        annual_take_home = annual_gross - total_tax
+        total_hours = hours_per_week * 52
+
+        filing_info = self.check_filing_requirement(
+            annual_gross, filing_status, age_65_or_older, spouse_65_or_older, is_self_employed
+        )
+
+        return {
+            "hourly_rate": hourly_rate,
+            "hours_per_week": hours_per_week,
+            "weekly_gross": weekly_gross,
+            "annual_gross": annual_gross,
+            "is_self_employed": is_self_employed,
+            "se_tax_info": se_tax_info,
+            "se_tax_deduction": se_tax_deduction,
+            "adjusted_gross_income": adjusted_gross_income,
+            "standard_deduction": standard_deduction,
+            "taxable_income": taxable_income,
+            "federal_tax": federal_tax,
+            "federal_breakdown": federal_breakdown,
+            "fica": fica,
+            "employment_taxes": employment_taxes,
+            "state_tax": state_tax,
+            "state_breakdown": state_breakdown,
+            "state_tax_type": state_tax_type,
+            "total_tax": total_tax,
+            "annual_take_home": annual_take_home,
+            "monthly_take_home": annual_take_home / 12,
+            "weekly_take_home": annual_take_home / 52,
+            "hourly_take_home": annual_take_home / total_hours if total_hours > 0 else 0,
+            "effective_rate": (total_tax / annual_gross * 100) if annual_gross > 0 else 0,
+            "filing_info": filing_info,
+        }
+
+
+class TaxCalculatorGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Hourly Tax Calculator 2026")
+        self.root.geometry("800x900")
+        self.root.configure(bg="#f5f5f5")
+        self.calculator = TaxCalculator()
+        self.results = None
+        self.create_widgets()
+
+    def create_widgets(self):
+        main_frame = ttk.Frame(self.root, padding="20")
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        title = tk.Label(main_frame, text="Hourly Tax Calculator 2026",
+                         font=('Helvetica', 18, 'bold'), bg="#f5f5f5")
+        title.pack(pady=(0, 5))
+        
+        # Estimate warning
+        estimate_label = tk.Label(main_frame, 
+                                   text="⚠️ 2026 values are estimates based on projected ~2.8% inflation adjustment",
+                                   font=('Helvetica', 9, 'italic'), bg="#f5f5f5", fg="#856404")
+        estimate_label.pack(pady=(0, 15))
+
+        input_frame = ttk.LabelFrame(main_frame, text="Enter Your Information", padding="15")
+        input_frame.pack(fill="x", pady=10)
+
+        ttk.Label(input_frame, text="Hourly Rate ($):").grid(row=0, column=0, sticky="w", pady=8)
+        self.hourly_var = tk.StringVar(value="15.00")
+        ttk.Entry(input_frame, textvariable=self.hourly_var, width=15).grid(row=0, column=1, sticky="w", pady=8)
+
+        ttk.Label(input_frame, text="Hours Per Week:").grid(row=1, column=0, sticky="w", pady=8)
+        self.hours_var = tk.StringVar(value="20")
+        ttk.Entry(input_frame, textvariable=self.hours_var, width=15).grid(row=1, column=1, sticky="w", pady=8)
+
+        ttk.Label(input_frame, text="Filing Status:").grid(row=2, column=0, sticky="w", pady=8)
+        self.filing_var = tk.StringVar(value="Single")
+        filing_combo = ttk.Combobox(input_frame, textvariable=self.filing_var, width=25, state="readonly",
+                                    values=["Single", "Married Filing Jointly", "Married Filing Separately", "Head of Household"])
+        filing_combo.grid(row=2, column=1, sticky="w", pady=8)
+        filing_combo.bind("<<ComboboxSelected>>", self.on_filing_status_change)
+
+        ttk.Label(input_frame, text="State:").grid(row=3, column=0, sticky="w", pady=8)
+        self.state_var = tk.StringVar(value="California")
+        ttk.Combobox(input_frame, textvariable=self.state_var, width=25, state="readonly",
+                     values=sorted(STATE_TAX_DATA.keys())).grid(row=3, column=1, sticky="w", pady=8)
+
+        ttk.Label(input_frame, text="Age:").grid(row=4, column=0, sticky="w", pady=8)
+        self.age_65_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(input_frame, text="I am 65 or older", variable=self.age_65_var).grid(row=4, column=1, sticky="w", pady=8)
+
+        self.spouse_age_label = ttk.Label(input_frame, text="Spouse Age:")
+        self.spouse_65_var = tk.BooleanVar(value=False)
+        self.spouse_age_check = ttk.Checkbutton(input_frame, text="Spouse is 65 or older", variable=self.spouse_65_var)
+
+        self.spouse_age_label.grid(row=5, column=0, sticky="w", pady=8)
+        self.spouse_age_check.grid(row=5, column=1, sticky="w", pady=8)
+        self.spouse_age_label.grid_remove()
+        self.spouse_age_check.grid_remove()
+
+        # Self-Employment Checkbox
+        ttk.Label(input_frame, text="Employment Type:").grid(row=6, column=0, sticky="w", pady=8)
+        self.self_employed_var = tk.BooleanVar(value=False)
+        self.self_employed_check = ttk.Checkbutton(input_frame, text="I am self-employed (1099/contractor)", 
+                                                    variable=self.self_employed_var)
+        self.self_employed_check.grid(row=6, column=1, sticky="w", pady=8)
+
+        calc_btn = tk.Button(main_frame, text="Calculate Taxes", command=self.calculate,
+                             font=('Helvetica', 12, 'bold'), bg="#4CAF50", fg="white",
+                             padx=30, pady=10, cursor="hand2")
+        calc_btn.pack(pady=20)
+
+        self.results_frame = ttk.LabelFrame(main_frame, text="Results", padding="15")
+        self.results_frame.pack(fill="both", expand=True, pady=10)
+
+        ttk.Label(self.results_frame, text="Enter your info and click Calculate").pack(pady=20)
+
+    def on_filing_status_change(self, event=None):
+        if self.filing_var.get() == "Married Filing Jointly":
+            self.spouse_age_label.grid()
+            self.spouse_age_check.grid()
+        else:
+            self.spouse_age_label.grid_remove()
+            self.spouse_age_check.grid_remove()
+            self.spouse_65_var.set(False)
+
+    def calculate(self):
+        try:
+            hourly_rate = float(self.hourly_var.get())
+            hours_per_week = float(self.hours_var.get())
+            filing_status = self.filing_var.get()
+            state = self.state_var.get()
+            age_65_or_older = self.age_65_var.get()
+            spouse_65_or_older = self.spouse_65_var.get()
+            is_self_employed = self.self_employed_var.get()
+
+            if hourly_rate <= 0 or hours_per_week <= 0:
+                messagebox.showerror("Error", "Please enter positive values.")
+                return
+
+            self.results = self.calculator.calculate_all_taxes(
+                hourly_rate, hours_per_week, filing_status, state,
+                age_65_or_older, spouse_65_or_older, is_self_employed
+            )
+            self.display_results()
+
+        except ValueError:
+            messagebox.showerror("Error", "Please enter valid numbers.")
+
+    def display_results(self):
+        for widget in self.results_frame.winfo_children():
+            widget.destroy()
+
+        if not self.results:
+            return
+
+        r = self.results
+        f = r["filing_info"]
+
+        canvas = tk.Canvas(self.results_frame, bg="#ffffff", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(self.results_frame, orient="vertical", command=canvas.yview)
+        scroll_frame = tk.Frame(canvas, bg="#ffffff")
+
+        scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        def on_mousewheel(event):
+            canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        canvas.bind_all("<MouseWheel>", on_mousewheel)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        # 2026 Estimate Warning Banner
+        warning_frame = tk.Frame(scroll_frame, bg="#fff3cd", padx=15, pady=8)
+        warning_frame.pack(fill="x", pady=(0, 5))
+        tk.Label(warning_frame, text="⚠️ 2026 TAX YEAR - ESTIMATED VALUES", 
+                font=('Helvetica', 10, 'bold'), bg="#fff3cd", fg="#856404").pack()
+        tk.Label(warning_frame, text="These figures are projections. Official IRS values not yet released.", 
+                font=('Helvetica', 8), bg="#fff3cd", fg="#856404").pack()
+
+        # Employment Type Banner
+        if r['is_self_employed']:
+            emp_frame = tk.Frame(scroll_frame, bg="#ff9800", padx=15, pady=8)
+            emp_frame.pack(fill="x", pady=(0, 5))
+            tk.Label(emp_frame, text="💼 SELF-EMPLOYED / 1099 CONTRACTOR", 
+                    font=('Helvetica', 10, 'bold'), bg="#ff9800", fg="white").pack()
+
+        # Filing Requirement Banner
+        filing_frame = tk.Frame(scroll_frame, bg="#d32f2f" if f["must_file"] else "#388e3c", padx=15, pady=12)
+        filing_frame.pack(fill="x", pady=(0, 10))
+
+        if f["must_file"]:
+            if f.get("se_filing_required"):
+                filing_text = "⚠️ YOU ARE REQUIRED TO FILE A TAX RETURN"
+                filing_detail = f"Self-employment income (${f['gross_income']:,.2f}) exceeds $400 threshold"
+            else:
+                filing_text = "⚠️ YOU ARE REQUIRED TO FILE A TAX RETURN"
+                filing_detail = f"Your gross income (${f['gross_income']:,.2f}) exceeds the filing threshold (${f['threshold']:,.2f}) by ${f['amount_over']:,.2f}"
+        else:
+            filing_text = "✓ YOU ARE NOT REQUIRED TO FILE A TAX RETURN"
+            filing_detail = f"Your gross income (${f['gross_income']:,.2f}) is below the filing threshold (${f['threshold']:,.2f}) by ${f['amount_under']:,.2f}"
+
+        tk.Label(filing_frame, text=filing_text, font=('Helvetica', 11, 'bold'),
+                 bg=filing_frame.cget('bg'), fg="white").pack()
+        tk.Label(filing_frame, text=filing_detail, font=('Helvetica', 9),
+                 bg=filing_frame.cget('bg'), fg="white").pack()
+
+        # Summary Cards
+        cards = tk.Frame(scroll_frame, bg="#ffffff")
+        cards.pack(fill="x", pady=10, padx=5)
+
+        for i, (title, value, color) in enumerate([
+            ("Gross Annual", f"${r['annual_gross']:,.2f}", "#e3f2fd"),
+            ("Total Taxes", f"${r['total_tax']:,.2f}", "#ffebee"),
+            ("Take Home", f"${r['annual_take_home']:,.2f}", "#e8f5e9"),
+            ("Eff. Rate", f"{r['effective_rate']:.1f}%", "#fff3e0")
+        ]):
+            card = tk.Frame(cards, bg=color, padx=12, pady=8)
+            card.grid(row=0, column=i, padx=5, sticky="nsew")
+            cards.grid_columnconfigure(i, weight=1)
+            tk.Label(card, text=title, font=('Helvetica', 9), bg=color).pack()
+            tk.Label(card, text=value, font=('Helvetica', 12, 'bold'), bg=color).pack()
+
+        # Details Frame
+        details = tk.Frame(scroll_frame, bg="#ffffff")
+        details.pack(fill="x", pady=10, padx=10)
+
+        # Build data rows
+        data = [
+            ("INCOME", None, None),
+            ("Hourly Rate:", f"${r['hourly_rate']:.2f}/hr", "#333"),
+            ("Hours/Week:", f"{r['hours_per_week']:.1f}", "#333"),
+            ("Weekly Gross:", f"${r['weekly_gross']:,.2f}", "#333"),
+            ("Annual Gross:", f"${r['annual_gross']:,.2f}", "#2e7d32"),
+        ]
+
+        # Self-Employment Tax Section or FICA Section
+        if r['is_self_employed']:
+            se = r['se_tax_info']
+            data.append(("", "", ""))
+            data.append(("SELF-EMPLOYMENT TAX", None, None))
+            data.append((f"Gross SE Income:", f"${se['gross_se_income']:,.2f}", "#333"))
+            data.append((f"Net SE Earnings (92.35%):", f"${se['net_se_earnings']:,.2f}", "#333"))
+            data.append(("", "", ""))
+            
+            ss_note = f" (capped at ${se['ss_wage_base']:,.0f})" if se['net_se_earnings'] > se['ss_wage_base'] else ""
+            data.append((f"Social Security (12.4%){ss_note}:", f"${se['ss_tax']:,.2f}", "#c62828"))
+            data.append(("Medicare (2.9%):", f"${se['medicare_tax']:,.2f}", "#c62828"))
+            
+            if se['additional_medicare_tax'] > 0:
+                data.append((f"Additional Medicare (0.9%):", f"${se['additional_medicare_tax']:,.2f}", "#c62828"))
+                data.append((f"  (on ${se['additional_medicare_earnings']:,.2f} over ${se['additional_medicare_threshold']:,.0f})", "", "#666"))
+            
+            data.append(("SE Tax Total:", f"${se['total_se_tax']:,.2f}", "#c62828"))
+            data.append(("", "", ""))
+            data.append(("DEDUCTIONS", None, None))
+            data.append(("SE Tax Deduction (50%):", f"-${r['se_tax_deduction']:,.2f}", "#2e7d32"))
+            data.append(("Adjusted Gross Income:", f"${r['adjusted_gross_income']:,.2f}", "#333"))
+            data.append(("Standard Deduction:", f"-${r['standard_deduction']:,.2f}", "#333"))
+            data.append(("Taxable Income:", f"${r['taxable_income']:,.2f}", "#333"))
+        else:
+            fica = r['fica']
+            data.append(("", "", ""))
+            data.append(("DEDUCTIONS", None, None))
+            data.append(("Standard Deduction:", f"-${r['standard_deduction']:,.2f}", "#333"))
+            data.append(("Taxable Income:", f"${r['taxable_income']:,.2f}", "#333"))
+            
+            data.append(("", "", ""))
+            data.append(("FICA TAXES (Employee)", None, None))
+            
+            # Social Security
+            ss_note = f" (capped at ${fica['ss_cap']:,.0f})" if r['annual_gross'] > fica['ss_cap'] else ""
+            data.append((f"Social Security (6.2%){ss_note}:", f"${fica['ss_tax']:,.2f}", "#c62828"))
+
+            # Medicare
+            data.append(("Medicare (1.45%):", f"${fica['medicare_tax']:,.2f}", "#c62828"))
+
+            # Additional Medicare Tax (if applicable)
+            if fica['additional_medicare_tax'] > 0:
+                data.append((f"Additional Medicare (0.9%):", f"${fica['additional_medicare_tax']:,.2f}", "#c62828"))
+                data.append((f"  (on ${fica['additional_medicare_wages']:,.2f} over ${fica['additional_medicare_threshold']:,.0f})", "", "#666"))
+
+            data.append(("FICA Total:", f"${fica['total_fica']:,.2f}", "#c62828"))
+
+        data.append(("", "", ""))
+        data.append(("FEDERAL TAX", None, None))
+
+        # Add federal breakdown
+        for b in r['federal_breakdown']:
+            data.append((f"  {b['bracket']} @ {b['rate']}:", f"${b['tax']:,.2f}", "#c62828"))
+        data.append(("Federal Tax Total:", f"${r['federal_tax']:,.2f}", "#c62828"))
+
+        data.append(("", "", ""))
+
+        # State tax section
+        state_name = self.state_var.get()
+        state_type = r['state_tax_type']
+
+        if state_type == "none":
+            data.append((f"STATE TAX ({state_name})", None, None))
+            data.append(("No state income tax", "$0.00", "#333"))
+        elif state_type == "flat":
+            data.append((f"STATE TAX ({state_name}) - Flat Rate", None, None))
+            if r['state_breakdown']:
+                b = r['state_breakdown'][0]
+                data.append((f"  {b['rate']} flat rate:", f"${b['tax']:,.2f}", "#c62828"))
+        else:
+            data.append((f"STATE TAX ({state_name}) - Progressive", None, None))
+            for b in r['state_breakdown']:
+                data.append((f"  {b['bracket']} @ {b['rate']}:", f"${b['tax']:,.2f}", "#c62828"))
+
+        data.append(("State Tax Total:", f"${r['state_tax']:,.2f}", "#c62828"))
+
+        data.append(("", "", ""))
+        data.append(("TOTAL TAXES:", f"${r['total_tax']:,.2f}", "#c62828"))
+
+        data.append(("", "", ""))
+        data.append(("TAKE HOME", None, None))
+        data.append(("Annual:", f"${r['annual_take_home']:,.2f}", "#2e7d32"))
+        data.append(("Monthly:", f"${r['monthly_take_home']:,.2f}", "#2e7d32"))
+        data.append(("Weekly:", f"${r['weekly_take_home']:,.2f}", "#2e7d32"))
+        data.append(("Hourly (effective):", f"${r['hourly_take_home']:,.2f}/hr", "#2e7d32"))
+
+        # Render all rows
+        row_idx = 0
+        for label, value, color in data:
+            if value is None:
+                tk.Label(details, text=label, font=('Helvetica', 11, 'bold'),
+                         bg="#ffffff").grid(row=row_idx, column=0, columnspan=2, sticky="w", pady=(10, 5))
+            elif label == "":
+                row_idx += 1
+                continue
+            else:
+                bold = label in ["Annual Gross:", "TOTAL TAXES:", "Hourly (effective):", 
+                                "Federal Tax Total:", "State Tax Total:", "FICA Total:", 
+                                "SE Tax Total:", "Adjusted Gross Income:"]
+                font = ('Helvetica', 10, 'bold') if bold else ('Helvetica', 10)
+                tk.Label(details, text=label, font=font, bg="#ffffff").grid(row=row_idx, column=0, sticky="w", pady=2)
+                if value:
+                    tk.Label(details, text=value, font=font, bg="#ffffff", fg=color).grid(row=row_idx, column=1, sticky="e", pady=2)
+            row_idx += 1
+
+        # Filing Information Section
+        filing_info_frame = tk.Frame(scroll_frame, bg="#f5f5f5", padx=10, pady=10)
+        filing_info_frame.pack(fill="x", pady=10, padx=5)
+
+        tk.Label(filing_info_frame, text="📋 FILING INFORMATION", font=('Helvetica', 11, 'bold'),
+                 bg="#f5f5f5").pack(anchor="w")
+
+        tk.Label(filing_info_frame, text=f"\nFiling Threshold for 2026 (Est.): ${f['threshold']:,.2f}",
+                 font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+        tk.Label(filing_info_frame, text=f"Your Gross Income: ${f['gross_income']:,.2f}",
+                 font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+
+        # Self-employment specific info
+        if r['is_self_employed']:
+            se = r['se_tax_info']
+            tk.Label(filing_info_frame, text=f"\n💼 SELF-EMPLOYMENT INFO",
+                     font=('Helvetica', 10, 'bold'), bg="#f5f5f5", fg="#e65100").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"SE Filing Threshold: $400",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"Net SE Earnings: ${se['net_se_earnings']:,.2f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"SE Tax Deduction (reduces AGI): ${r['se_tax_deduction']:,.2f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"Additional Medicare Threshold ({self.filing_var.get()}): ${se['additional_medicare_threshold']:,.0f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            
+            # Quarterly estimated tax reminder
+            quarterly_tax = r['total_tax'] / 4
+            tk.Label(filing_info_frame, text=f"\n📅 ESTIMATED QUARTERLY PAYMENTS",
+                     font=('Helvetica', 10, 'bold'), bg="#f5f5f5", fg="#1976d2").pack(anchor="w")
+            tk.Label(filing_info_frame, text=f"Estimated quarterly payment: ${quarterly_tax:,.2f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+            tk.Label(filing_info_frame, text="Due dates: Apr 15, Jun 15, Sep 15, Jan 15",
+                     font=('Helvetica', 9), bg="#f5f5f5").pack(anchor="w")
+        else:
+            fica = r['fica']
+            tk.Label(filing_info_frame, text=f"\nAdditional Medicare Tax Threshold ({self.filing_var.get()}): ${fica['additional_medicare_threshold']:,.0f}",
+                     font=('Helvetica', 10), bg="#f5f5f5").pack(anchor="w")
+
+        if not f["must_file"]:
+            tk.Label(filing_info_frame, text="\n⚠️ You may still need to file if:",
+                     font=('Helvetica', 10, 'bold'), bg="#f5f5f5", fg="#e65100").pack(anchor="w")
+            for item in f["special_circumstances"][:3]:
+                tk.Label(filing_info_frame, text=f"  • {item}",
+                         font=('Helvetica', 9), bg="#f5f5f5").pack(anchor="w")
+
+            tk.Label(filing_info_frame, text="\n💡 You may want to file anyway if:",
+                     font=('Helvetica', 10, 'bold'), bg="#f5f5f5", fg="#1976d2").pack(anchor="w")
+            for item in f["reasons_to_file_anyway"][:3]:
+                tk.Label(filing_info_frame, text=f"  • {item}",
+                         font=('Helvetica', 9), bg="#f5f5f5").pack(anchor="w")
+
+        disclaimer = tk.Label(scroll_frame,
+                              text="⚠️ 2026 values are ESTIMATES based on projected inflation. Consult IRS.gov for official figures when released.",
+                              font=('Helvetica', 8, 'italic'), bg="#ffffff", fg="#757575", wraplength=600)
+        disclaimer.pack(pady=10)
+
+
+def main():
+    root = tk.Tk()
+    app = TaxCalculatorGUI(root)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
