@@ -1,3 +1,6 @@
+I AM NOT A TAX PROFESSIONAL, THESE TOOLS SHOULD BE ACCURATE, HOWEVER I AM NOT RESPONSIBLE FOR ANY INACCURACIES THAT MAY BE EXISTENT. IF YOU DO FIND ANY INACCURACIES PLEASE CREATE AN ISSUE SO I CAN FIX THEM.  
+
+
 # Tax-calculator
 a calculator for your taxes, it also tells you if you need to file according to irs.gov if your in america
 
